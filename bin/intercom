@@ -60,11 +60,14 @@ reconcile() {
   done
 }
 
-_register() { # _register <role> [cwd]
+_register() { # _register <role> [cwd] [session]
   # cwd defaults to $PWD (correct for interactive `register`), but hooks pass the
   # project dir explicitly — Claude Code runs hook commands from an unrelated cwd
   # (e.g. /tmp), so $PWD is not the project there.
-  local role="$1" cwd="${2:-$PWD}" tmp
+  local role="$1" cwd="${2:-$PWD}" session="${3:-}" tmp existing="$PEERS_DIR/$WEZTERM_PANE"
+  # The session id only reaches us via the SessionStart hook payload; interactive
+  # `register` can't see it, so carry forward whatever the hook already stored.
+  [ -n "$session" ] || session="$(get_field "$existing" session)"
   mkdir -p "$PEERS_DIR"
   tmp="$(mktemp "$PEERS_DIR/.tmp-XXXXXX")"
   {
@@ -72,9 +75,10 @@ _register() { # _register <role> [cwd]
     printf 'pane=%s\n' "$WEZTERM_PANE"
     printf 'repo=%s\n' "$(repo_name "$cwd")"
     printf 'cwd=%s\n'  "$cwd"
+    printf 'session=%s\n' "$session"
     printf 'ts=%s\n'   "$(date +%s)"
   } > "$tmp"
-  mv "$tmp" "$PEERS_DIR/$WEZTERM_PANE"
+  mv "$tmp" "$existing"
 }
 
 # Drain this pane's inbox: print claimed messages (verbatim bodies), nothing if
@@ -154,18 +158,25 @@ cmd_hook_session_start() {
   [ -n "${WEZTERM_PANE:-}" ] || exit 0
   # The project dir comes from the hook input JSON's `cwd` field, NOT $PWD
   # (Claude Code runs hooks from an unrelated working directory).
-  local input proj_cwd role="unset" existing="$PEERS_DIR/$WEZTERM_PANE"
+  local input proj_cwd session role="unset" existing="$PEERS_DIR/$WEZTERM_PANE"
   input="$(cat)"
   proj_cwd="$(printf '%s' "$input" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
   [ -n "$proj_cwd" ] || proj_cwd="$PWD"
+  session="$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
   if [ -f "$existing" ]; then
-    local ex_cwd ex_role
-    ex_cwd="$(get_field "$existing" cwd)"; ex_role="$(get_field "$existing" role)"
-    # Same cwd => same session resumed/reloaded: preserve a declared role.
-    [ "$ex_cwd" = "$proj_cwd" ] && [ -n "$ex_role" ] && role="$ex_role"
+    local ex_session ex_role
+    ex_session="$(get_field "$existing" session)"; ex_role="$(get_field "$existing" role)"
+    # Same session (resume/compact/clear/reload) => preserve a declared role.
+    # cwd is NOT used here: it differs across resume-from-another-dir and the
+    # $PWD fallback, which would otherwise silently wipe the role to 'unset'.
+    # An empty stored session means the role was declared before any SessionStart
+    # stamped one — preserve it rather than reset.
+    if [ -n "$ex_role" ] && { [ -z "$ex_session" ] || [ "$ex_session" = "$session" ]; }; then
+      role="$ex_role"
+    fi
   fi
   [ -n "${CLAUDE_INTERCOM_ROLE:-}" ] && role="$CLAUDE_INTERCOM_ROLE"
-  _register "$role" "$proj_cwd"
+  _register "$role" "$proj_cwd" "$session"
 
   # Context injected into the session (UserPromptSubmit/SessionStart stdout is
   # added to the model's context). Built with plain echo lines — bash 3.2
@@ -174,7 +185,11 @@ cmd_hook_session_start() {
   echo "## claude-intercom active"
   echo "You are pane $WEZTERM_PANE in a WezTerm multi-agent peer setup. Your role: $role."
   if [ "$role" = unset ]; then
-    echo "-> Declare your role so peers can reach you: intercom register <role>  (e.g. backend, frontend)."
+    if [ "$roster" != "(no live peers)" ]; then
+      echo "-> You have no role yet, but peer sessions are already live (listed below). On your first reply, ASK the user which role this session should take, then run: intercom register <role>  (e.g. backend, frontend)."
+    else
+      echo "-> Declare your role so peers can reach you: intercom register <role>  (e.g. backend, frontend)."
+    fi
   fi
   echo "- See live peers:  intercom list"
   echo "- Message a peer:  pipe text to 'intercom send <role>' via a quoted heredoc or printf, so quotes/code/newlines pass through untouched."

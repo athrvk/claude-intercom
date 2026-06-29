@@ -88,6 +88,33 @@ SS_REPO="$(grep -m1 '^repo=' "$CLAUDE_INTERCOM_STATE_DIR/peers/52" | cut -d= -f2
 check "SessionStart registers cwd from JSON" "[ '$SS_CWD' = '/tmp/myproj' ]"
 check "SessionStart derives repo from JSON cwd" "[ '$SS_REPO' = 'myproj' ]"
 
+echo "== SessionStart preserves declared role across same-session re-fire =="
+export MOCK_PANES="52 77"
+ssfire(){ export WEZTERM_PANE=77; printf '{"hook_event_name":"SessionStart","cwd":"%s","session_id":"%s"}' "$1" "$2" | "$PEER" hook-session-start >/dev/null; }
+( ssfire /tmp/proj77 S-AAA )                                  # startup: stamps session, role unset
+( export WEZTERM_PANE=77; "$PEER" register denali >/dev/null ) # user declares role
+( ssfire /tmp/proj77 S-AAA )                                  # compact/reload, SAME session id
+check "role preserved on same-session re-fire" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
+
+echo "== SessionStart preserves role when cwd changes but session is same (resume from diff dir) =="
+( ssfire /somewhere/else S-AAA )
+check "role survives cwd change, same session" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
+
+echo "== SessionStart resets role when session_id differs (pane id reused by new session) =="
+( ssfire /tmp/proj77 S-BBB )
+check "role reset to unset on new session_id" "grep -qx 'role=unset' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
+
+echo "== SessionStart asks the user for a role when unset AND peers are present =="
+export MOCK_PANES="52 88"   # pane 52 is registered + live, so pane 88 has a peer
+SS_PEERS="$(export WEZTERM_PANE=88; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p88","session_id":"S-88"}' | "$PEER" hook-session-start)"
+check "prompts agent to ask user when peers present" "printf '%s' \"\$SS_PEERS\" | grep -qi 'ask the user'"
+
+echo "== SessionStart does NOT nag to ask the user when solo (no peers) =="
+export MOCK_PANES="90"
+SS_SOLO="$(export WEZTERM_PANE=90; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p90","session_id":"S-90"}' | "$PEER" hook-session-start)"
+check "no ask-user prompt when solo" "! printf '%s' \"\$SS_SOLO\" | grep -qi 'ask the user'"
+check "solo still gets the register nudge" "printf '%s' \"\$SS_SOLO\" | grep -qi 'intercom register'"
+
 echo
 echo "PASS=$pass FAIL=$fail"
 rm -rf "$WORK"
