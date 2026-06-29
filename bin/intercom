@@ -203,10 +203,10 @@ cmd_hook_session_start() {
   if [ "$role" = unset ]; then
     if [ "$names" != none ]; then
       echo "## claude-intercom · role=unset · peers: $names"
-      echo "intercom links independent Claude Code sessions in separate panes that coordinate by role, like agent-team teammates. Peers are live but this session has no role, so they can't reach it. The user decides the role — ask the user which it should take, then register it: intercom register <role>"
+      echo "intercom links independent Claude Code sessions in separate panes that coordinate by role, like agent-team teammates. This session has no role yet, so the peers above can't reach it. When the user names this session's role — e.g. \"you are the backend agent\" — running intercom register <role> registers it directly (no need to ask again)."
     else
       echo "## claude-intercom · role=unset"
-      echo "intercom links Claude Code sessions in separate WezTerm panes that coordinate by role, like agent-team teammates. Registering a role makes this session reachable: intercom register <role> (e.g. backend, frontend)."
+      echo "intercom links Claude Code sessions in separate WezTerm panes that coordinate by role, like agent-team teammates. When the user names this session's role — e.g. \"you are the backend agent\" — running intercom register <role> makes it reachable (no need to ask again)."
     fi
   else
     echo "## claude-intercom · role=$role · peers: $names"

@@ -122,16 +122,19 @@ check "register unset clears role" "grep -qx 'role=unset' '$CLAUDE_INTERCOM_STAT
 ( export WEZTERM_PANE=79; "$PEER" unregister >/dev/null )
 check "unregister clears role"     "grep -qx 'role=unset' '$CLAUDE_INTERCOM_STATE_DIR/peers/79'"
 
-echo "== SessionStart asks the user for a role when unset AND peers are present =="
+echo "== unset context auto-registers the role the user names (no interrogation) =="
 export MOCK_PANES="52 88"   # pane 52 is registered + live, so pane 88 has a peer
-SS_PEERS="$(export WEZTERM_PANE=88; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p88","session_id":"S-88"}' | "$PEER" hook-session-start)"
-check "prompts agent to ask user when peers present" "printf '%s' \"\$SS_PEERS\" | grep -qi 'ask the user'"
+SS_PEERS="$(export WEZTERM_PANE=88; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p88"}' | "$PEER" hook-session-start)"
+check "unset+peers points to register"        "printf '%s' \"\$SS_PEERS\" | grep -q 'intercom register'"
+check "unset+peers gives role-decl example"    "printf '%s' \"\$SS_PEERS\" | grep -qi 'you are'"
+check "unset+peers does NOT tell agent to interrogate" "! printf '%s' \"\$SS_PEERS\" | grep -qi 'ask the user'"
 
-echo "== SessionStart does NOT nag to ask the user when solo (no peers) =="
+echo "== unset solo context also auto-registers a named role =="
 export MOCK_PANES="90"
-SS_SOLO="$(export WEZTERM_PANE=90; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p90","session_id":"S-90"}' | "$PEER" hook-session-start)"
-check "no ask-user prompt when solo" "! printf '%s' \"\$SS_SOLO\" | grep -qi 'ask the user'"
-check "solo still gets the register nudge" "printf '%s' \"\$SS_SOLO\" | grep -qi 'intercom register'"
+SS_SOLO="$(export WEZTERM_PANE=90; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p90"}' | "$PEER" hook-session-start)"
+check "solo points to register"             "printf '%s' \"\$SS_SOLO\" | grep -qi 'intercom register'"
+check "solo gives role-decl example"        "printf '%s' \"\$SS_SOLO\" | grep -qi 'you are'"
+check "solo does NOT tell agent to interrogate" "! printf '%s' \"\$SS_SOLO\" | grep -qi 'ask the user'"
 
 echo "== SessionStart role-set context is terse (names-only roster, no how-to bullets) =="
 export MOCK_PANES="66 67"

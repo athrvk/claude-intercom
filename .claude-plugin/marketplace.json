@@ -9,7 +9,7 @@
       "name": "claude-intercom",
       "source": "./",
       "description": "Message-passing between independent Claude Code sessions running in WezTerm panes, addressed by role.",
-      "version": "0.3.1"
+      "version": "0.3.2"
     }
   ]
 }
