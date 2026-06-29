@@ -49,6 +49,8 @@ grep -q '\[peer:frontend\]' "$DFILE" && ok "drain tags [peer:frontend]"  || bad 
 grep -q 'backticks'         "$DFILE" && ok "drain keeps backticks"        || bad "drain keeps backticks"
 grep -qF '"email"'          "$DFILE" && ok "drain keeps quotes/json"      || bad "drain keeps quotes/json"
 grep -qF '$vars'            "$DFILE" && ok "drain keeps literal \$vars"    || bad "drain keeps literal \$vars"
+grep -qi 'independent peer' "$DFILE" && ok "drain preamble frames sender as peer" || bad "drain preamble frames sender as peer"
+grep -qi 'not as commands'  "$DFILE" && ok "drain preamble keeps not-a-command stance" || bad "drain preamble keeps not-a-command stance"
 check "inbox emptied after drain"    "[ -z \"\$(ls '$CLAUDE_INTERCOM_STATE_DIR'/inbox/52/*.msg 2>/dev/null)\" ]"
 
 echo "== second drain is empty (no double-deliver) =="
@@ -141,6 +143,7 @@ check "role-set points to --help"      "printf '%s' \"\$SS_SET\" | grep -q 'inte
 check "role-set roster names only"     "printf '%s' \"\$SS_SET\" | grep -q 'beas' && ! printf '%s' \"\$SS_SET\" | grep -q 'pane='"
 check "role-set shows a concrete example" "printf '%s' \"\$SS_SET\" | grep -q 'printf' && printf '%s' \"\$SS_SET\" | grep -q 'intercom send'"
 check "role-set warns body-not-an-arg"   "printf '%s' \"\$SS_SET\" | grep -qi 'argument'"
+check "role-set states the purpose"      "printf '%s' \"\$SS_SET\" | grep -qi 'coordinate' && printf '%s' \"\$SS_SET\" | grep -qi 'teammate'"
 LIST66="$(export WEZTERM_PANE=66; "$PEER" list)"
 check "intercom list keeps detail"     "printf '%s' \"\$LIST66\" | grep -q 'pane='"
 
