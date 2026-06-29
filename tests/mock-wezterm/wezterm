@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Mock `wezterm` for tests. Records send-text calls; returns canned `list` JSON.
+#   MOCK_PANES="52 65"   -> which pane ids are "live"
+#   MOCK_LOG=/path/log   -> where send-text invocations are appended
+set -uo pipefail
+[ "${1:-}" = cli ] || { echo "mock wezterm: only 'cli' supported" >&2; exit 1; }
+shift
+sub="${1:-}"; shift || true
+case "$sub" in
+  list)
+    out="["; first=1
+    for p in ${MOCK_PANES:-}; do
+      [ $first -eq 1 ] || out+=","
+      first=0
+      out+="{\"window_id\":0,\"tab_id\":$p,\"pane_id\":$p,\"workspace\":\"default\",\"title\":\"pane $p\",\"cwd\":\"file://host/tmp/repo$p/\"}"
+    done
+    out+="]"
+    printf '%s\n' "$out"
+    ;;
+  send-text)
+    # Record the full invocation (args) for assertions.
+    printf 'send-text %s\n' "$*" >> "${MOCK_LOG:-/dev/null}"
+    ;;
+  get-text)
+    : ;;
+  *)
+    echo "mock wezterm: unsupported subcommand '$sub'" >&2; exit 1 ;;
+esac

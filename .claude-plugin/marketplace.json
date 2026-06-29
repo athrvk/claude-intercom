@@ -1,0 +1,15 @@
+{
+  "name": "claude-intercom-marketplace",
+  "owner": {
+    "name": "Atharva Kusumbia",
+    "email": "atharvakusumbia@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "claude-intercom",
+      "source": "./",
+      "description": "Message-passing between independent Claude Code sessions running in WezTerm panes, addressed by role.",
+      "version": "0.1.0"
+    }
+  ]
+}
