@@ -64,10 +64,10 @@ _register() { # _register <role> [cwd]
   # cwd defaults to $PWD (correct for interactive `register`), but hooks pass the
   # project dir explicitly — Claude Code runs hook commands from an unrelated cwd
   # (e.g. /tmp), so $PWD is not the project there.
-  # The conversation id is read from $CLAUDE_CODE_SESSION_ID, which both the agent
-  # shell and the hook environment inherit and which is stable for the life of the
-  # conversation. (The SessionStart payload's session_id is a per-attach value that
-  # changes on every /reload-plugins, so it must NOT be used for identity.)
+  # Identity is the WezTerm pane alone — the only id that is stable across all
+  # session churn AND identical in the hook process and the agent shell. No
+  # session/conversation id is stored: every such id we tried (payload session_id,
+  # CLAUDE_CODE_SESSION_ID) either churns on reload or diverges between contexts.
   local role="$1" cwd="${2:-$PWD}" tmp existing="$PEERS_DIR/$WEZTERM_PANE"
   mkdir -p "$PEERS_DIR"
   tmp="$(mktemp "$PEERS_DIR/.tmp-XXXXXX")"
@@ -76,7 +76,6 @@ _register() { # _register <role> [cwd]
     printf 'pane=%s\n' "$WEZTERM_PANE"
     printf 'repo=%s\n' "$(repo_name "$cwd")"
     printf 'cwd=%s\n'  "$cwd"
-    printf 'session=%s\n' "${CLAUDE_CODE_SESSION_ID:-}"
     printf 'ts=%s\n'   "$(date +%s)"
   } > "$tmp"
   mv "$tmp" "$existing"
@@ -176,28 +175,20 @@ cmd_hook_session_start() {
   [ -n "${WEZTERM_PANE:-}" ] || exit 0
   # The project dir comes from the hook input JSON's `cwd` field, NOT $PWD
   # (Claude Code runs hooks from an unrelated working directory).
-  local input proj_cwd cur role="unset" existing="$PEERS_DIR/$WEZTERM_PANE"
+  local input proj_cwd role="unset" existing="$PEERS_DIR/$WEZTERM_PANE"
   input="$(cat)"
   proj_cwd="$(printf '%s' "$input" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
   [ -n "$proj_cwd" ] || proj_cwd="$PWD"
-  # Identity is the STABLE conversation id from the environment — never the
-  # payload's session_id, which changes on every /reload-plugins within the same
-  # conversation and would silently wipe the role to 'unset' on each reload.
-  cur="${CLAUDE_CODE_SESSION_ID:-}"
-  if [ -f "$existing" ]; then
-    local ex_session ex_role
-    ex_session="$(get_field "$existing" session)"; ex_role="$(get_field "$existing" role)"
-    # Preserve a declared role unless we have POSITIVE evidence this is a
-    # different conversation reusing a recycled pane id: reset only when both
-    # conversation ids are known and differ. A missing id on either side
-    # (declared before any id was stamped, or env unavailable) is NOT evidence
-    # of a new conversation, so we keep the role. cwd is not used: it differs
-    # across resume-from-another-dir and the $PWD fallback.
-    if [ -n "$ex_role" ] && { [ -z "$ex_session" ] || [ -z "$cur" ] || [ "$ex_session" = "$cur" ]; }; then
-      role="$ex_role"
-    fi
-  fi
-  [ -n "${CLAUDE_INTERCOM_ROLE:-}" ] && role="$CLAUDE_INTERCOM_ROLE"
+  # SessionStart is READ-ONLY for the role. The role has exactly one writer:
+  # explicit `intercom register`. So SessionStart never downgrades a declared
+  # role — it keeps whatever the pane already has and only initialises 'unset'
+  # for a pane with no entry at all. This is why the role no longer flaps to
+  # unset on resume/compact/reload/restart: nothing implicit can change it.
+  # (A new conversation that reuses a recycled pane id inherits the old role
+  # until re-registered — a rare, benign edge we accept rather than gate on any
+  # unreliable session id.)
+  [ -f "$existing" ] && role="$(get_field "$existing" role)"
+  [ -n "$role" ] || role="unset"
   _register "$role" "$proj_cwd"
 
   # Context injected into the session (SessionStart stdout is added to the model's
@@ -218,16 +209,10 @@ cmd_hook_session_start() {
   fi
 }
 
-# SessionEnd: do NOT delete this pane's role. Resume/compact/reload end the
-# session but keep the SAME pane alive, so eagerly deleting here made the role
-# flap out on every cycle (peers saw "no live peer" between delete and the next
-# register). Pane liveness is the sole authority for pruning: reconcile drops
-# entries+inboxes for panes wezterm no longer lists. Running it here is just
-# prompt housekeeping that cleans up panes which have genuinely closed.
-cmd_hook_session_end() {
-  [ -n "${WEZTERM_PANE:-}" ] || exit 0
-  reconcile
-}
+# Note: there is deliberately NO SessionEnd hook. A session ending does not mean
+# the pane is gone (resume/reload keep it alive), so we must not clear the role
+# here. Cleanup is pane-liveness only: reconcile (run on every list/send and
+# SessionStart) prunes entries+inboxes for panes wezterm no longer lists.
 
 # PreToolUse hook: auto-approve this plugin's own `intercom` commands so the
 # agent isn't prompted, WITHOUT editing the user's settings.
@@ -257,10 +242,14 @@ intercom - message peer Claude Code sessions in other WezTerm panes, by role.
 
 USAGE
   intercom register <role>     Declare this session's role (e.g. backend, frontend)
+  intercom unregister          Clear this session's role (alias: register unset)
   intercom list                List live peer sessions (alias: peers)
   intercom send <role>         Send the message on STDIN to the peer with <role>
   intercom inbox               Show & drain pending messages for this pane
   intercom whoami              Show this session's role and pane id
+
+  A role, once registered, sticks to this WezTerm pane across resume/compact/
+  reload/restart — only `unregister` (or the pane closing) clears it.
 
 SENDING
   The message is read from STDIN (never an argument), so arbitrary text -
@@ -288,7 +277,13 @@ case "$cmd" in
   register)
     require_pane; [ $# -ge 1 ] || die "usage: intercom register <role>"
     _register "$1"
-    echo "intercom: registered as '$1' (pane $WEZTERM_PANE). Send to a peer: printf 'hi' | intercom send <role>  (message on STDIN, never an argument)." ;;
+    if [ "$1" = unset ]; then
+      echo "intercom: role cleared (pane $WEZTERM_PANE)"
+    else
+      echo "intercom: registered as '$1' (pane $WEZTERM_PANE). Send to a peer: printf 'hi' | intercom send <role>  (message on STDIN, never an argument)."
+    fi ;;
+  unregister|deregister)
+    require_pane; _register unset; echo "intercom: role cleared (pane $WEZTERM_PANE)" ;;
   list|peers)  require_pane; cmd_list ;;
   send)
     require_pane; [ $# -ge 1 ] || die "usage: intercom send <role>  (message on stdin)"
@@ -301,7 +296,6 @@ case "$cmd" in
     echo "role=$(get_field "$PEERS_DIR/$WEZTERM_PANE" role) pane=$WEZTERM_PANE" ;;
   hook-session-start)        cmd_hook_session_start ;;
   hook-user-prompt-submit)   [ -n "${WEZTERM_PANE:-}" ] || exit 0; drain ;;
-  hook-session-end)          cmd_hook_session_end ;;
   hook-pre-approve)          cmd_hook_pre_approve ;;
   ""|-h|--help|help)         usage ;;
   *)                         die "unknown command '$cmd' (try: intercom --help)" ;;

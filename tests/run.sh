@@ -91,38 +91,34 @@ SS_REPO="$(grep -m1 '^repo=' "$CLAUDE_INTERCOM_STATE_DIR/peers/52" | cut -d= -f2
 check "SessionStart registers cwd from JSON" "[ '$SS_CWD' = '/tmp/myproj' ]"
 check "SessionStart derives repo from JSON cwd" "[ '$SS_REPO' = 'myproj' ]"
 
-echo "== SessionStart preserves declared role across same-conversation re-fire =="
+echo "== role sticks to the pane across ANY SessionStart re-fire (no id/cwd dependence) =="
 export MOCK_PANES="52 77"
-# Identity is the stable CLAUDE_CODE_SESSION_ID env var, NOT the payload session_id
-# (the payload id is a per-attach value that churns on every /reload-plugins).
-ssfire(){ export WEZTERM_PANE=77; printf '{"hook_event_name":"SessionStart","cwd":"%s","session_id":"payload-ignored"}' "$1" | "$PEER" hook-session-start >/dev/null; }
-( export CLAUDE_CODE_SESSION_ID=conv-AAA; ssfire /tmp/proj77 )                                # startup, role unset
-( export WEZTERM_PANE=77 CLAUDE_CODE_SESSION_ID=conv-AAA; "$PEER" register denali >/dev/null ) # declare role
-( export CLAUDE_CODE_SESSION_ID=conv-AAA; ssfire /tmp/proj77 )                                # compact/reload, SAME conversation
-check "role preserved on same-conversation re-fire" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
+ssfire(){ export WEZTERM_PANE=77; printf '{"hook_event_name":"SessionStart","cwd":"%s","session_id":"%s"}' "$1" "$2" | "$PEER" hook-session-start >/dev/null; }
+( ssfire /tmp/proj77 id-A )                                     # brand-new pane -> unset
+( export WEZTERM_PANE=77; "$PEER" register denali >/dev/null )   # declare role
+( ssfire /tmp/proj77 id-A )                                     # plain re-fire
+check "role kept on plain re-fire"       "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
+( ssfire /somewhere/else id-B )                                 # different cwd AND payload id
+check "role kept despite changed cwd+id" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
+( export WEZTERM_PANE=77 CLAUDE_CODE_SESSION_ID=env-diff; ssfire /x q )   # env id present and different
+check "role kept regardless of env id"   "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
+( export WEZTERM_PANE=77; unset CLAUDE_CODE_SESSION_ID; printf '{"cwd":"/x"}' | "$PEER" hook-session-start >/dev/null )  # no ids at all
+check "role kept with no ids present"    "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
+check "no session= field is written"     "! grep -q '^session=' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
 
-echo "== SessionStart preserves role when cwd changes but conversation is same =="
-( export CLAUDE_CODE_SESSION_ID=conv-AAA; ssfire /somewhere/else )
-check "role survives cwd change, same conversation" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
+echo "== SessionStart sets unset only for a brand-new pane (no prior entry) =="
+export MOCK_PANES="52 78"
+( export WEZTERM_PANE=78; printf '{"cwd":"/tmp/p78"}' | "$PEER" hook-session-start >/dev/null )
+check "brand-new pane is unset" "grep -qx 'role=unset' '$CLAUDE_INTERCOM_STATE_DIR/peers/78'"
 
-echo "== SessionStart preserves role when payload session_id churns but conversation id is stable (the reload bug) =="
-export MOCK_PANES="52 55"
-( export WEZTERM_PANE=55 CLAUDE_CODE_SESSION_ID=conv-CCC; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p55","session_id":"attach-1"}' | "$PEER" hook-session-start >/dev/null )
-( export WEZTERM_PANE=55 CLAUDE_CODE_SESSION_ID=conv-CCC; "$PEER" register denali >/dev/null )
-( export WEZTERM_PANE=55 CLAUDE_CODE_SESSION_ID=conv-CCC; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p55","session_id":"attach-2-DIFFERENT"}' | "$PEER" hook-session-start >/dev/null )
-check "role survives a reload (payload id changed, conversation id same)" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/55'"
-
-echo "== SessionStart resets role when CLAUDE_CODE_SESSION_ID differs (new conversation reuses pane) =="
-export MOCK_PANES="52 77"   # keep pane 77 live so reconcile doesn't prune it
-( export CLAUDE_CODE_SESSION_ID=conv-BBB; ssfire /tmp/proj77 )
-check "role reset to unset on new conversation id" "grep -qx 'role=unset' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
-
-echo "== SessionStart preserves role when no conversation id is available =="
-export MOCK_PANES="52 44"
-( export WEZTERM_PANE=44; unset CLAUDE_CODE_SESSION_ID; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p44"}' | "$PEER" hook-session-start >/dev/null )
-( export WEZTERM_PANE=44; unset CLAUDE_CODE_SESSION_ID; "$PEER" register denali >/dev/null )
-( export WEZTERM_PANE=44; unset CLAUDE_CODE_SESSION_ID; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p44"}' | "$PEER" hook-session-start >/dev/null )
-check "role preserved when no conversation id available" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/44'"
+echo "== role is cleared only by explicit register unset / unregister =="
+export MOCK_PANES="52 79"
+( export WEZTERM_PANE=79; "$PEER" register denali >/dev/null )
+( export WEZTERM_PANE=79; "$PEER" register unset >/dev/null )
+check "register unset clears role" "grep -qx 'role=unset' '$CLAUDE_INTERCOM_STATE_DIR/peers/79'"
+( export WEZTERM_PANE=79; "$PEER" register denali >/dev/null )
+( export WEZTERM_PANE=79; "$PEER" unregister >/dev/null )
+check "unregister clears role"     "grep -qx 'role=unset' '$CLAUDE_INTERCOM_STATE_DIR/peers/79'"
 
 echo "== SessionStart asks the user for a role when unset AND peers are present =="
 export MOCK_PANES="52 88"   # pane 52 is registered + live, so pane 88 has a peer
@@ -152,19 +148,15 @@ echo "== register output tells a fresh agent how to send =="
 REGOUT="$(export WEZTERM_PANE=66 CLAUDE_CODE_SESSION_ID=c66; "$PEER" register infra)"
 check "register output shows send usage" "printf '%s' \"\$REGOUT\" | grep -q 'intercom send' && printf '%s' \"\$REGOUT\" | grep -qi 'stdin'"
 
-echo "== SessionEnd keeps the role while the pane is still live (survives resume) =="
+echo "== cleanup is pane-liveness only: reconcile prunes a closed pane's entry =="
 export MOCK_PANES="52 33"
-( export WEZTERM_PANE=33; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p33","session_id":"S-33"}' | "$PEER" hook-session-start >/dev/null )
 ( export WEZTERM_PANE=33; "$PEER" register denali >/dev/null )
-( export WEZTERM_PANE=33; "$PEER" hook-session-end )
-check "role survives SessionEnd when pane live" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/33'"
-( export WEZTERM_PANE=33; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p33","session_id":"S-33"}' | "$PEER" hook-session-start >/dev/null )
-check "role preserved on resume after SessionEnd" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/33'"
-
-echo "== SessionEnd prunes the entry only once the pane is gone =="
 export MOCK_PANES="52"   # pane 33 closed for good
-( export WEZTERM_PANE=33; "$PEER" hook-session-end )
-check "entry pruned when pane gone" "[ ! -f '$CLAUDE_INTERCOM_STATE_DIR/peers/33' ]"
+( export WEZTERM_PANE=52; "$PEER" list >/dev/null )   # any reconcile trigger
+check "closed pane entry pruned by reconcile" "[ ! -f '$CLAUDE_INTERCOM_STATE_DIR/peers/33' ]"
+
+echo "== SessionEnd hook is gone (no such subcommand) =="
+check "hook-session-end no longer a command" "! (export WEZTERM_PANE=52; \"$PEER\" hook-session-end 2>/dev/null)"
 
 echo
 echo "PASS=$pass FAIL=$fail"

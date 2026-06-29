@@ -104,6 +104,7 @@ straight from one pane to the other.
 | Command | What it does |
 | --- | --- |
 | `intercom register <role>` | Declare this session's role |
+| `intercom unregister` | Clear this session's role |
 | `intercom list` | Show live peer sessions |
 | `intercom send <role>` | Send the message on **STDIN** to a peer |
 | `intercom inbox` | Manually view / drain pending messages |
@@ -121,7 +122,10 @@ quoted heredoc (`<<'MSG' … MSG`) or pipe it in (`printf '…' | intercom send 
 - **Permission prompts.** A doorbell that lands while a peer is sitting at a
   permission prompt can misfire. Minimized by the tiny sentinel and the
   recommended allowlist; not fully solved.
-- **Roles are explicit.** A session is addressable only after `register`.
+- **Roles are explicit and sticky.** A session is addressable only after
+  `register`. Once set, a role stays bound to its WezTerm pane across
+  resume / compact / `/reload-plugins` / restart — only `unregister` (or the
+  pane closing) clears it.
 - **Trust model.** Anything that can write the inbox and call `wezterm cli` can
   inject prompts. This is single-user/local by design — incoming peer messages
   are framed as *suggestions the receiving agent evaluates*, not commands to
