@@ -104,6 +104,13 @@ echo "== SessionStart resets role when session_id differs (pane id reused by new
 ( ssfire /tmp/proj77 S-BBB )
 check "role reset to unset on new session_id" "grep -qx 'role=unset' '$CLAUDE_INTERCOM_STATE_DIR/peers/77'"
 
+echo "== SessionStart preserves role when a re-fire omits session_id =="
+export MOCK_PANES="52 44"
+( export WEZTERM_PANE=44; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p44","session_id":"S-44"}' | "$PEER" hook-session-start >/dev/null )
+( export WEZTERM_PANE=44; "$PEER" register denali >/dev/null )
+( export WEZTERM_PANE=44; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p44"}' | "$PEER" hook-session-start >/dev/null )  # no session_id
+check "role preserved when re-fire has no session_id" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/44'"
+
 echo "== SessionStart asks the user for a role when unset AND peers are present =="
 export MOCK_PANES="52 88"   # pane 52 is registered + live, so pane 88 has a peer
 SS_PEERS="$(export WEZTERM_PANE=88; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p88","session_id":"S-88"}' | "$PEER" hook-session-start)"
@@ -114,6 +121,20 @@ export MOCK_PANES="90"
 SS_SOLO="$(export WEZTERM_PANE=90; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p90","session_id":"S-90"}' | "$PEER" hook-session-start)"
 check "no ask-user prompt when solo" "! printf '%s' \"\$SS_SOLO\" | grep -qi 'ask the user'"
 check "solo still gets the register nudge" "printf '%s' \"\$SS_SOLO\" | grep -qi 'intercom register'"
+
+echo "== SessionEnd keeps the role while the pane is still live (survives resume) =="
+export MOCK_PANES="52 33"
+( export WEZTERM_PANE=33; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p33","session_id":"S-33"}' | "$PEER" hook-session-start >/dev/null )
+( export WEZTERM_PANE=33; "$PEER" register denali >/dev/null )
+( export WEZTERM_PANE=33; "$PEER" hook-session-end )
+check "role survives SessionEnd when pane live" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/33'"
+( export WEZTERM_PANE=33; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p33","session_id":"S-33"}' | "$PEER" hook-session-start >/dev/null )
+check "role preserved on resume after SessionEnd" "grep -qx 'role=denali' '$CLAUDE_INTERCOM_STATE_DIR/peers/33'"
+
+echo "== SessionEnd prunes the entry only once the pane is gone =="
+export MOCK_PANES="52"   # pane 33 closed for good
+( export WEZTERM_PANE=33; "$PEER" hook-session-end )
+check "entry pruned when pane gone" "[ ! -f '$CLAUDE_INTERCOM_STATE_DIR/peers/33' ]"
 
 echo
 echo "PASS=$pass FAIL=$fail"
