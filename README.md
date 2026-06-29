@@ -6,9 +6,9 @@ peer acts on it. Example: a frontend session tells the backend session
 *"expose `POST /api/users` returning `{id, email, name}`"* and the backend
 session picks it up automatically.
 
-Pure `bash` + the `wezterm cli` binary. **No runtime dependencies.** Driven by
-Claude Code hooks, so the capability is always present — no skill to remember to
-invoke.
+Pure `bash` + the `wezterm cli` binary — **everything it needs ships in the
+box.** Driven by Claude Code hooks, so the capability is always present and
+ready the moment a session starts.
 
 ## How it works
 
@@ -36,8 +36,8 @@ intercom send backend  ──┐
   a carriage return). The peer's `UserPromptSubmit` hook expands the inbox into
   clean, tagged context. This keeps arbitrary message content (quotes,
   backticks, `$vars`, newlines, code) out of the terminal entirely.
-- **Receiving is free** — an injected prompt is consumed as a normal user turn;
-  no polling, no daemon.
+- **Receiving is effortless** — an injected prompt is consumed as a normal user
+  turn, handled entirely by the existing hook.
 
 ## Install
 
@@ -56,7 +56,7 @@ Hooks and the `intercom` command load at **session start**, so they activate
 in sessions launched *after* install. To enable it in an already-running
 session, run `/reload-plugins` (or just start a new one).
 
-No symlinks, `PATH` edits, or settings changes are needed:
+Installation is fully self-contained — the plugin wires everything up for you:
 
 - **`intercom` is on `PATH` automatically** — it ships in the plugin's `bin/`,
   which Claude Code adds to the session `PATH`.
@@ -96,8 +96,8 @@ MSG
 ```
 
 The backend session receives it automatically — delivered into its prompt tagged
-`[peer:frontend] …` — acts on it, and can reply the same way. No copy-pasting
-between windows.
+`[peer:frontend] …` — acts on it, and can reply the same way. Work flows
+straight from one pane to the other.
 
 ### Command reference
 
