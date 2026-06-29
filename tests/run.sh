@@ -127,7 +127,7 @@ export MOCK_PANES="52 88"   # pane 52 is registered + live, so pane 88 has a pee
 SS_PEERS="$(export WEZTERM_PANE=88; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p88"}' | "$PEER" hook-session-start)"
 check "unset+peers points to register"        "printf '%s' \"\$SS_PEERS\" | grep -q 'intercom register'"
 check "unset+peers gives role-decl example"    "printf '%s' \"\$SS_PEERS\" | grep -qi 'you are'"
-check "unset+peers directs immediate action"   "printf '%s' \"\$SS_PEERS\" | grep -qi 'immediately'"
+check "unset+peers uses 2nd-person declare framing" "printf '%s' \"\$SS_PEERS\" | grep -qi 'declare' && printf '%s' \"\$SS_PEERS\" | grep -qi 'your role'"
 check "unset+peers does NOT tell agent to interrogate" "! printf '%s' \"\$SS_PEERS\" | grep -qi 'ask the user'"
 
 echo "== unset solo context also auto-registers a named role =="
@@ -135,7 +135,7 @@ export MOCK_PANES="90"
 SS_SOLO="$(export WEZTERM_PANE=90; printf '{"hook_event_name":"SessionStart","cwd":"/tmp/p90"}' | "$PEER" hook-session-start)"
 check "solo points to register"             "printf '%s' \"\$SS_SOLO\" | grep -qi 'intercom register'"
 check "solo gives role-decl example"        "printf '%s' \"\$SS_SOLO\" | grep -qi 'you are'"
-check "solo directs immediate action"       "printf '%s' \"\$SS_SOLO\" | grep -qi 'immediately'"
+check "solo uses 2nd-person declare framing" "printf '%s' \"\$SS_SOLO\" | grep -qi 'declare' && printf '%s' \"\$SS_SOLO\" | grep -qi 'your role'"
 check "solo does NOT tell agent to interrogate" "! printf '%s' \"\$SS_SOLO\" | grep -qi 'ask the user'"
 
 echo "== SessionStart role-set context is terse (names-only roster, no how-to bullets) =="

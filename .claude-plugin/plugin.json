@@ -1,6 +1,6 @@
 {
   "name": "claude-intercom",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Message-passing between independent Claude Code sessions running in WezTerm panes, addressed by role. One agent can hand work to another (e.g. a frontend session tells the backend session to expose an API) and the peer acts on it.",
   "author": {
     "name": "Atharva Kusumbia",
