@@ -123,6 +123,9 @@ cmd_list() {
       "$(get_field "$f" role)" "$id" "$(get_field "$f" repo)" "$(get_field "$f" cwd)"
   done
   [ "$any" = 1 ] || echo "(no live peers)"
+  local myrole; myrole="$(get_field "$PEERS_DIR/$WEZTERM_PANE" role)"
+  [ -n "$myrole" ] || myrole="unset"
+  printf '(you: %s · pane %s)\n' "$myrole" "$WEZTERM_PANE"
 }
 
 # Comma-separated role names of live peers (excluding self), or "none". A compact

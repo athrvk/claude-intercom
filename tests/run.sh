@@ -30,7 +30,8 @@ check "frontend registered" "grep -qx 'role=frontend' '$CLAUDE_INTERCOM_STATE_DI
 echo "== list excludes self =="
 LIST="$(export WEZTERM_PANE=52; "$PEER" list)"
 check "list shows frontend" "printf '%s' \"$LIST\" | grep -q frontend"
-check "list hides self"     "! printf '%s' \"$LIST\" | grep -q backend"
+check "list hides self"     "! printf '%s' \"$LIST\" | grep -v '(you:' | grep -q backend"
+check "list shows self footer" "printf '%s' \"\$LIST\" | grep -q '(you: backend'"
 
 echo "== send (stdin, arbitrary content) =="
 MSG=$'Please expose POST /api/users returning {id,"email",name}\nUse `backticks` and $vars verbatim.'
