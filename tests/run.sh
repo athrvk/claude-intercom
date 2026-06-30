@@ -107,13 +107,26 @@ check "rejects process substitution"  "[ -z \"$A7\" ]"
 A8="$(approve '{"tool_name":"Bash","tool_input":{"command":"intercom whoami\nrm -rf ~"}}')"
 check "rejects newline-smuggled cmd"  "[ -z \"$A8\" ]"
 
-echo "== SessionStart uses cwd from hook JSON, not \$PWD =="
-( export WEZTERM_PANE=52; cd /tmp 2>/dev/null
+echo "== SessionStart uses cwd from hook JSON, not \$PWD (fresh pane only) =="
+# Use a fresh pane (55) that has no prior registry entry — for a brand-new pane
+# the hook's cwd is the only source, so it must be used verbatim.
+export MOCK_PANES="52 55"
+( export WEZTERM_PANE=55; cd /tmp 2>/dev/null
   printf '{"hook_event_name":"SessionStart","cwd":"/tmp/myproj","session_id":"x"}' | "$PEER" hook-session-start >/dev/null )
-SS_CWD="$(grep -m1 '^cwd=' "$CLAUDE_INTERCOM_STATE_DIR/peers/52" | cut -d= -f2-)"
-SS_REPO="$(grep -m1 '^repo=' "$CLAUDE_INTERCOM_STATE_DIR/peers/52" | cut -d= -f2-)"
+SS_CWD="$(grep -m1 '^cwd=' "$CLAUDE_INTERCOM_STATE_DIR/peers/55" | cut -d= -f2-)"
+SS_REPO="$(grep -m1 '^repo=' "$CLAUDE_INTERCOM_STATE_DIR/peers/55" | cut -d= -f2-)"
 check "SessionStart registers cwd from JSON" "[ '$SS_CWD' = '/tmp/myproj' ]"
 check "SessionStart derives repo from JSON cwd" "[ '$SS_REPO' = 'myproj' ]"
+
+echo "== SessionStart does NOT overwrite cwd once a pane is registered =="
+# Simulate: pane 52 was registered with project cwd, then SessionStart re-fires
+# from a temp dir (as Claude Code does on resume). The stored cwd must survive.
+( export WEZTERM_PANE=52; "$PEER" register backend >/dev/null )
+STORED_CWD="$(grep -m1 '^cwd=' "$CLAUDE_INTERCOM_STATE_DIR/peers/52" | cut -d= -f2-)"
+( export WEZTERM_PANE=52; printf '{"hook_event_name":"SessionStart","cwd":"/private/tmp","session_id":"resume"}' | "$PEER" hook-session-start >/dev/null )
+AFTER_CWD="$(grep -m1 '^cwd=' "$CLAUDE_INTERCOM_STATE_DIR/peers/52" | cut -d= -f2-)"
+check "SessionStart does not overwrite existing cwd" "[ '$AFTER_CWD' = '$STORED_CWD' ]"
+check "SessionStart does not overwrite cwd with /private/tmp" "[ '$AFTER_CWD' != '/private/tmp' ]"
 
 echo "== role sticks to the pane across ANY SessionStart re-fire (no id/cwd dependence) =="
 export MOCK_PANES="52 77"

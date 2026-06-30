@@ -198,8 +198,18 @@ cmd_hook_session_start() {
   # (A new conversation that reuses a recycled pane id inherits the old role
   # until re-registered — a rare, benign edge we accept rather than gate on any
   # unreliable session id.)
-  [ -f "$existing" ] && role="$(get_field "$existing" role)"
-  [ -n "$role" ] || role="unset"
+  if [ -f "$existing" ]; then
+    role="$(get_field "$existing" role)"
+    [ -n "$role" ] || role="unset"
+    # Preserve the cwd that was stored when the pane was first registered.
+    # SessionStart fires on every resume/compact/reload; the hook JSON's cwd
+    # can be a temp dir rather than the project dir, so don't let it overwrite
+    # the correct project cwd that was recorded at register time.
+    local stored_cwd; stored_cwd="$(get_field "$existing" cwd)"
+    [ -n "$stored_cwd" ] && proj_cwd="$stored_cwd"
+  else
+    role="unset"
+  fi
   _register "$role" "$proj_cwd"
 
   # Context injected into the session (SessionStart stdout is added to the model's
