@@ -62,8 +62,11 @@ Installation is fully self-contained — the plugin wires everything up for you:
   which Claude Code adds to the session `PATH`.
 - **Permission prompts are handled for you** — a bundled `PreToolUse` hook
   auto-approves the plugin's own `intercom` commands (gated by
-  `if: "Bash(intercom *)"`, which uses Claude Code's matcher and rejects
-  command chaining). An explicit `deny`/`ask` rule or managed policy still wins.
+  `if: "Bash(intercom *)"`). The hook only approves a command built from a safe
+  character set, and only approves an input redirect when its source is under
+  this session's outbox — so it can never run a smuggled second command or ship
+  an arbitrary file to a peer. An explicit `deny`/`ask` rule or managed policy
+  still wins.
 
 > Locked-down setup (managed policy or an explicit `ask` rule)? Add
 > `"Bash(intercom:*)"` to your `permissions.allow` manually.
@@ -87,12 +90,10 @@ From one session, just ask the agent to message its peer:
 > **You →** "Tell the backend agent we need `POST /api/users` returning
 > `{id, email, name}`."
 
-The agent runs:
+The agent writes the request to a file in its outbox, then sends it:
 
 ```text
-intercom send backend <<'MSG'
-Please expose POST /api/users returning {id, email, name}
-MSG
+intercom send backend < <outbox>/message.txt
 ```
 
 The backend session receives it automatically — delivered into its prompt tagged
@@ -108,11 +109,15 @@ straight from one pane to the other.
 | `intercom list` | Show live peer sessions |
 | `intercom send <role>` | Send the message on **STDIN** to a peer |
 | `intercom inbox` | Manually view / drain pending messages |
-| `intercom whoami` | Show this session's role and pane id |
+| `intercom whoami` | Show this session's role, pane id, and outbox path |
 
 The message for `send` is always read from **STDIN**, never an argument — so
-quotes, backticks, `$vars`, and multi-line code pass through untouched. Use a
-quoted heredoc (`<<'MSG' … MSG`) or pipe it in (`printf '…' | intercom send backend`).
+quotes, backticks, `$vars`, and multi-line code pass through untouched. Write the
+body to a file in this session's **outbox** (`intercom whoami` prints the path),
+then redirect that file in (`intercom send backend < <outbox>/message.txt`).
+Only a redirect from the outbox is auto-approved (no permission prompt) — the
+body stays off the command line, so it carries any content safely, and the
+staged file is removed once the send succeeds.
 
 ## Scope & limitations (v1)
 

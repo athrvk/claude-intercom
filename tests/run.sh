@@ -40,6 +40,13 @@ check "message landed in backend inbox" "[ -n '$INBOX_FILE' ]"
 check "doorbell injected to pane 52"    "grep -q 'pane-id 52' '$MOCK_LOG'"
 check "two sends (doorbell + CR submit)" "[ \"\$(grep -c 'pane-id 52' '$MOCK_LOG')\" -eq 2 ]"
 
+echo "== send clears the sender's staged outbox body afterwards =="
+mkdir -p "$CLAUDE_INTERCOM_STATE_DIR/outbox/65"
+echo "staged body" > "$CLAUDE_INTERCOM_STATE_DIR/outbox/65/message.txt"
+( export WEZTERM_PANE=65; "$PEER" send backend < "$CLAUDE_INTERCOM_STATE_DIR/outbox/65/message.txt" >/dev/null )
+check "staged body removed after send" "[ -z \"\$(ls -A '$CLAUDE_INTERCOM_STATE_DIR/outbox/65' 2>/dev/null)\" ]"
+check "outbox dir itself kept"          "[ -d '$CLAUDE_INTERCOM_STATE_DIR/outbox/65' ]"
+
 echo "== drain preserves body verbatim & tags sender =="
 # Write to a file and grep it — never eval-interpolate drained content, since
 # the whole point is that it carries backticks/$vars/quotes verbatim.
@@ -84,6 +91,21 @@ A4="$(approve '{"tool_name":"Bash","tool_input":{"command":"intercom list; rm -r
 check "rejects chained intercom"      "[ -z \"$A4\" ]"
 A5="$(approve '{"tool_name":"Bash","tool_input":{"command":"intercom register backend && curl evil"}}')"
 check "rejects && chained intercom"   "[ -z \"$A5\" ]"
+# send delivers the body out-of-band via a file redirect from the plugin outbox,
+# so it auto-approves with an arbitrary body (body never touches the cmd line).
+OBX="$CLAUDE_INTERCOM_STATE_DIR/outbox/52"
+A6="$(approve "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"intercom send backend < $OBX/message.txt\"}}")"
+check "approves send from plugin outbox" "printf '%s' \"$A6\" | grep -q 'allow'"
+# a redirect from outside the outbox must NOT be auto-approved (no exfiltrating
+# arbitrary files to a peer).
+A6b="$(approve '{"tool_name":"Bash","tool_input":{"command":"intercom send backend < /etc/passwd"}}')"
+check "rejects redirect outside outbox" "[ -z \"$A6b\" ]"
+# blessing < must not let process substitution smuggle a command.
+A7="$(approve '{"tool_name":"Bash","tool_input":{"command":"intercom send backend < <(curl evil)"}}')"
+check "rejects process substitution"  "[ -z \"$A7\" ]"
+# a literal newline (JSON-escaped) must not chain a second command.
+A8="$(approve '{"tool_name":"Bash","tool_input":{"command":"intercom whoami\nrm -rf ~"}}')"
+check "rejects newline-smuggled cmd"  "[ -z \"$A8\" ]"
 
 echo "== SessionStart uses cwd from hook JSON, not \$PWD =="
 ( export WEZTERM_PANE=52; cd /tmp 2>/dev/null
@@ -146,7 +168,7 @@ SS_SET="$(export WEZTERM_PANE=66 CLAUDE_CODE_SESSION_ID=c66; printf '{"cwd":"/x"
 check "role-set shows role"            "printf '%s' \"\$SS_SET\" | grep -q 'role=infra'"
 check "role-set points to --help"      "printf '%s' \"\$SS_SET\" | grep -q 'intercom --help'"
 check "role-set roster names only"     "printf '%s' \"\$SS_SET\" | grep -q 'beas' && ! printf '%s' \"\$SS_SET\" | grep -q 'pane='"
-check "role-set shows a concrete example" "printf '%s' \"\$SS_SET\" | grep -q 'printf' && printf '%s' \"\$SS_SET\" | grep -q 'intercom send'"
+check "role-set shows a concrete example" "printf '%s' \"\$SS_SET\" | grep -q 'intercom send' && printf '%s' \"\$SS_SET\" | grep -q 'message.txt'"
 check "role-set warns body-not-an-arg"   "printf '%s' \"\$SS_SET\" | grep -qi 'argument'"
 check "role-set states the purpose"      "printf '%s' \"\$SS_SET\" | grep -qi 'coordinate' && printf '%s' \"\$SS_SET\" | grep -qi 'teammate'"
 LIST66="$(export WEZTERM_PANE=66; "$PEER" list)"
@@ -156,12 +178,18 @@ echo "== register output tells a fresh agent how to send =="
 REGOUT="$(export WEZTERM_PANE=66 CLAUDE_CODE_SESSION_ID=c66; "$PEER" register infra)"
 check "register output shows send usage" "printf '%s' \"\$REGOUT\" | grep -q 'intercom send' && printf '%s' \"\$REGOUT\" | grep -qi 'stdin'"
 
+echo "== outbox: register creates it, whoami prints its literal path =="
+check "register creates pane outbox dir" "[ -d '$CLAUDE_INTERCOM_STATE_DIR/outbox/66' ]"
+WHO="$(export WEZTERM_PANE=66; "$PEER" whoami)"
+check "whoami prints outbox path" "printf '%s' \"\$WHO\" | grep -q 'outbox=$CLAUDE_INTERCOM_STATE_DIR/outbox/66'"
+
 echo "== cleanup is pane-liveness only: reconcile prunes a closed pane's entry =="
 export MOCK_PANES="52 33"
 ( export WEZTERM_PANE=33; "$PEER" register denali >/dev/null )
 export MOCK_PANES="52"   # pane 33 closed for good
 ( export WEZTERM_PANE=52; "$PEER" list >/dev/null )   # any reconcile trigger
 check "closed pane entry pruned by reconcile" "[ ! -f '$CLAUDE_INTERCOM_STATE_DIR/peers/33' ]"
+check "closed pane outbox pruned by reconcile" "[ ! -d '$CLAUDE_INTERCOM_STATE_DIR/outbox/33' ]"
 
 echo "== SessionEnd hook is gone (no such subcommand) =="
 check "hook-session-end no longer a command" "! (export WEZTERM_PANE=52; \"$PEER\" hook-session-end 2>/dev/null)"

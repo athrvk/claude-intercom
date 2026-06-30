@@ -11,6 +11,11 @@ set -uo pipefail
 STATE_DIR="${CLAUDE_INTERCOM_STATE_DIR:-$HOME/.claude/claude-intercom}"
 PEERS_DIR="$STATE_DIR/peers"
 INBOX_DIR="$STATE_DIR/inbox"
+# Per-pane staging dir for outgoing message bodies. `send` reads its body from a
+# file (never the command line); the pre-approve hook only auto-approves a
+# redirect whose source is under here, so an auto-approved send can never
+# exfiltrate an arbitrary file (e.g. ~/.ssh/id_rsa) to a peer.
+OUTBOX_DIR="$STATE_DIR/outbox"
 
 DOORBELL='[claude-intercom] 📬 peer message below (empty? run: intercom inbox)'
 
@@ -56,6 +61,7 @@ reconcile() {
     if ! printf '%s\n' "$live" | grep -qx "$id"; then
       rm -f "$f"
       rm -rf "${INBOX_DIR:?}/$id"
+      rm -rf "${OUTBOX_DIR:?}/$id"
     fi
   done
 }
@@ -79,6 +85,7 @@ _register() { # _register <role> [cwd]
     printf 'ts=%s\n'   "$(date +%s)"
   } > "$tmp"
   mv "$tmp" "$existing"
+  mkdir -p "$OUTBOX_DIR/$WEZTERM_PANE"   # staging dir for this pane's outgoing bodies
 }
 
 # Drain this pane's inbox: print claimed messages (verbatim bodies), nothing if
@@ -168,6 +175,10 @@ cmd_send() { # cmd_send <role>   (body on stdin)
     || die "failed to inject into pane $target (peer gone?)"
   wezterm cli send-text --pane-id "$target" --no-paste $'\r'
 
+  # Body delivered: drop this pane's staged outbox file(s) so scratch message
+  # files don't linger mid-session. (reconcile removes the dir on pane close.)
+  rm -f "$OUTBOX_DIR/$WEZTERM_PANE"/* 2>/dev/null || true
+
   echo "intercom: sent to '$role' (pane $target)"
 }
 
@@ -211,7 +222,7 @@ cmd_hook_session_start() {
   else
     echo "## claude-intercom · role=$role · peers: $names"
     echo "intercom links independent Claude Code sessions in separate WezTerm panes, each registered to a role — peers that coordinate directly, like agent-team teammates rather than subagents reporting to a parent. Each peer above runs its own session and owns its own role/repo."
-    echo "Reaching a peer is how this session gets work, an API/contract, or an answer that belongs to that peer's domain. Messages send via \`intercom send <role>\` and are read from STDIN, never an argument — e.g. printf 'hi' | intercom send beas (a quoted heredoc carries multi-line text or code). Replies arrive tagged [peer:<role>] as input from an independent session. More: intercom --help"
+    echo "Reaching a peer is how this session gets work, an API/contract, or an answer that belongs to that peer's domain. To send: write the message body to a file in this session's outbox ($OUTBOX_DIR/$WEZTERM_PANE) and redirect it in (the body is read from STDIN, never an argument) — e.g. intercom send beas < $OUTBOX_DIR/$WEZTERM_PANE/message.txt. Only a redirect from that outbox is auto-approved (so the body carries any content, including code, with no prompt); the staged file is removed after the send. Replies arrive tagged [peer:<role>] as input from an independent session. More: intercom --help"
   fi
 }
 
@@ -230,14 +241,27 @@ cmd_hook_session_start() {
 # with `intercom` and the leading segment carries no chaining/substitution.
 # An explicit user `deny`/`ask` rule and managed policy still override this.
 cmd_hook_pre_approve() {
-  local input cmd val trimmed
+  local input cmd val trimmed target
   input="$(cat)"
   cmd="$(printf '%s' "$input" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"//p')"
   if [ -n "$cmd" ]; then
     val="${cmd%%\"*}"                          # up to the value's closing quote
     trimmed="${val#"${val%%[![:space:]]*}"}"   # left-trim
     case "$trimmed" in intercom\ *|intercom) : ;; *) exit 0 ;; esac
-    case "$val" in *[\;\|\&\`]* | *'$('*) exit 0 ;; esac   # no chaining/subst
+    # Whitelist: the body travels out-of-band (a file redirect), so a legit
+    # command needs only letters, digits, space, and / . _ - < . Anything else
+    # (; | & ` $( <( ) parens, backslash/newline escapes) could execute a second
+    # command, so refuse to blanket-approve it.
+    case "$val" in *[!A-Za-z0-9/._\<\ -]*) exit 0 ;; esac
+    # If the command redirects input, the source MUST live under the plugin
+    # outbox. The body is staged there by the agent, so an auto-approved send can
+    # never read and ship an arbitrary file (e.g. /etc/passwd, ~/.ssh/id_rsa).
+    case "$val" in
+      *'<'*)
+        target="${val#*<}"                               # text after the first <
+        target="${target#"${target%%[![:space:]]*}"}"    # left-trim spaces
+        case "$target" in "$OUTBOX_DIR"/*) : ;; *) exit 0 ;; esac ;;
+    esac
   fi
   printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"claude-intercom own intercom command"}}'
 }
@@ -258,15 +282,16 @@ USAGE
   reload/restart — only `unregister` (or the pane closing) clears it.
 
 SENDING
-  The message is read from STDIN (never an argument), so arbitrary text -
-  quotes, backticks, $vars, newlines, code - passes through untouched.
-  Use a quoted heredoc (delimiter in single quotes disables expansion), e.g.:
+  The message is read from STDIN (never an argument). Write the body to a file
+  in this session's outbox (run `intercom whoami` to print its path), then
+  redirect that file in - using the literal path, not a $var or $(...):
 
-      intercom send backend <-quoted-heredoc->
-        Please expose POST /api/users returning {id, email, name}
-      <-end->
+      intercom send backend < OUTBOX/message.txt
 
-  or pipe it:   printf 'Please expose POST /api/users' | intercom send backend
+  Only a redirect whose source is under the outbox is auto-approved (no
+  permission prompt); the body stays off the command line, so it carries any
+  content - quotes, backticks, $vars, code - safely. The staged file is removed
+  once the send succeeds.
 
 NOTES
   - Peers must run on the same machine (shared local state dir). Remote/SSH
@@ -286,7 +311,7 @@ case "$cmd" in
     if [ "$1" = unset ]; then
       echo "intercom: role cleared (pane $WEZTERM_PANE)"
     else
-      echo "intercom: registered as '$1' (pane $WEZTERM_PANE). Send to a peer: printf 'hi' | intercom send <role>  (message on STDIN, never an argument)."
+      echo "intercom: registered as '$1' (pane $WEZTERM_PANE). Send to a peer: write the message to a file, then 'intercom send <role> < file' (body on STDIN, never an argument)."
     fi ;;
   unregister|deregister)
     require_pane; _register unset; echo "intercom: role cleared (pane $WEZTERM_PANE)" ;;
@@ -299,7 +324,7 @@ case "$cmd" in
     out="$(drain)"; if [ -n "$out" ]; then printf '%s' "$out"; else echo "(no pending peer messages)"; fi ;;
   whoami)
     require_pane
-    echo "role=$(get_field "$PEERS_DIR/$WEZTERM_PANE" role) pane=$WEZTERM_PANE" ;;
+    echo "role=$(get_field "$PEERS_DIR/$WEZTERM_PANE" role) pane=$WEZTERM_PANE outbox=$OUTBOX_DIR/$WEZTERM_PANE" ;;
   hook-session-start)        cmd_hook_session_start ;;
   hook-user-prompt-submit)   [ -n "${WEZTERM_PANE:-}" ] || exit 0; drain ;;
   hook-pre-approve)          cmd_hook_pre_approve ;;
